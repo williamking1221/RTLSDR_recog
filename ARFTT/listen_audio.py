@@ -38,7 +38,7 @@ args = parser.parse_args()
 sdr = RtlSdr()
 sdr.rs = 2400000
 sdr.fc = args.freq
-sdr.gain = args.gain
+sdr.gain = 'auto'
 sdr.err_ppm = args.ppm
 
 sdr.read_samples_async(read_callback, int(sdr.get_sample_rate()) // 16)
