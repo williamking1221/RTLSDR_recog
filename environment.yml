@@ -1,0 +1,7 @@
+name: capstone-dev
+dependencies:
+  - python=3.8
+  - pip
+
+  # build dependencies
+  - versioneer[toml]
