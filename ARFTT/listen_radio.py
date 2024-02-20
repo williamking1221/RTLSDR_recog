@@ -24,18 +24,38 @@ def process(samples: SampleStream, sdr: RtlSdr) -> None:
     audio_signal = signal.decimate(demodulated_comercial, sample_rate_fm // audio_rate, zero_phase=True)
     audio_signal = np.int16(14000 * audio_signal)
 
+    # Apply squelch to the demodulated audio
+    squelched_audio = apply_squelch(audio_signal, squelch)
+
     audio_output.write(audio_signal.astype("int16").tobytes())
+
+
+def apply_squelch(audio_signal: np.ndarray, squelch_threshold) -> np.ndarray:
+    # Calculate the signal power
+    signal_power = np.mean(audio_signal ** 2)
+
+    # If the signal power is below the threshold, set the audio signal to zero
+    if signal_power < squelch_threshold:
+        squelched_audio = np.zeros_like(audio_signal)
+    else:
+        squelched_audio = audio_signal
+
+    return squelched_audio
+
 
 def read_callback(samples, rtl_sdr_obj):
     process(samples, rtl_sdr_obj)
 
+
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--ppm', type=int, default=0,
                     help='ppm error correction')
-parser.add_argument('--gain', type=int, default=20,
+parser.add_argument('--gain', type=int, default="auto",
                     help='RF gain level')
 parser.add_argument('--freq', type=int, default=92900000,
                     help='frequency to listen to, in Hertz')
+parser.add_argument('--squelch', type=float, default=0.01,
+                    help='minimum threshold required for audio output to show')
 parser.add_argument('--verbose', action='store_true',
                     help='mute audio output')
 
@@ -46,5 +66,6 @@ sdr.rs = 1024000
 sdr.fc = args.freq
 sdr.gain = args.gain
 sdr.err_ppm = args.ppm
+squelch = args.squelch
 
 sdr.read_samples_async(read_callback, int(sdr.get_sample_rate()) // 16)
