@@ -1,9 +1,14 @@
 from typing import List
 from rtlsdr import RtlSdr
+from rtlsdr.rtlsdraio import RtlSdrAio
 import argparse
 import numpy as np
 import pyaudio
 import scipy.signal as signal
+
+
+SampleStream = List[float]
+AudioStream = List[int]
 
 
 class RTLSDR_Radio:
@@ -15,16 +20,7 @@ class RTLSDR_Radio:
         self.audio_rate = 48000
         self.audio_output = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=self.audio_rate, output=True)
 
-        self.setup_rtlsdr()
-
-    def setup_rtlsdr(self):
-        self.sdr = RtlSdr()
-        self.sdr.rs = 1024000
-        self.sdr.fc = self.freq
-        self.sdr.gain = "auto"
-        self.sdr.err_ppm = self.ppm
-
-    def process_samples(self, samples):
+    async def process_samples(self, samples: SampleStream, sdr: RtlSdr) -> None:
         sample_rate_fm = 240000
         iq_commercial = signal.decimate(samples, int(self.sdr.get_sample_rate()) // sample_rate_fm)
 
@@ -51,11 +47,18 @@ class RTLSDR_Radio:
 
         return squelched_audio
 
-    def read_callback(self, samples):
-        self.process_samples(samples)
+    def read_callback(self, samples, rtl_sdr_obj):
+        self.process_samples(samples, rtl_sdr_obj)
 
-    def start(self):
-        self.sdr.read_samples_async(self.read_callback, int(self.sdr.get_sample_rate()) // 16)
+    async def start(self):
+        self.sdr = RtlSdrAio()
+        self.sdr.rs = 1024000
+        self.sdr.fc = self.freq
+        self.sdr.gain = "auto"
+        self.sdr.err_ppm = self.ppm
 
-    def stop(self):
-        self.sdr.cancel_read_async()
+        async for samples in self.sdr.stream():
+            await self.process_samples(samples, self.sdr)
+
+    async def stop(self):
+        await self.sdr.stop()

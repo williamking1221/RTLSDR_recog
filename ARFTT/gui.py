@@ -1,4 +1,6 @@
 import tkinter as tk
+import asyncio
+from ARFTT.listen_radio import RTLSDR_Radio
 
 
 class RTLSDR_GUI:
@@ -6,7 +8,7 @@ class RTLSDR_GUI:
         self.root = root
         self.rtl_sdr_radio = rtl_sdr_radio
 
-        self.paused = False
+        self.paused = True
         self.squelch = tk.DoubleVar()
         self.squelch.set(self.rtl_sdr_radio.squelch)  # Default squelch value
 
@@ -14,8 +16,11 @@ class RTLSDR_GUI:
 
     def setup_gui(self):
         # Add a button to pause/resume data acquisition
-        self.pause_button = tk.Button(self.root, text="Pause/Resume", command=self.toggle_pause)
+        self.pause_button = tk.Button(self.root, text="Pause", command=self.toggle_pause)
         self.pause_button.pack()
+
+        self.play_button = tk.Button(self.root, text="Play", command=self.toggle_play)
+        self.play_button.pack()
 
         # Add a slider to adjust squelch threshold
         self.squelch_label = tk.Label(self.root, text="Squelch Threshold:")
@@ -29,15 +34,19 @@ class RTLSDR_GUI:
         self.apply_button.pack()
 
     def toggle_pause(self):
-        # self.paused = not self.paused
-        # if self.paused:
-        #     self.rtl_sdr_radio.stop()
-        # else:
-        #     self.rtl_sdr_radio.start()
-        pass
+        if not self.paused:
+            asyncio.create_task(self.rtl_sdr_radio.stop())
+            self.paused = True
+
+    def toggle_play(self):
+        if self.paused:
+            self.paused = False
+            self.rtl_sdr_radio = RTLSDR_Radio(freq=101500000, ppm=0, squelch=self.squelch.get())
+            asyncio.create_task(self.rtl_sdr_radio.start())
 
     def update_squelch(self, value):
-        self.rtl_sdr_radio.squelch = float(value)
+        if hasattr(self, 'rtl_sdr_radio'):
+            self.rtl_sdr_radio.squelch = float(value)
 
     def apply_parameters(self):
         self.paused = False
@@ -47,4 +56,3 @@ class RTLSDR_GUI:
 
     def get_squelch_value(self):
         return self.squelch.get()
-
