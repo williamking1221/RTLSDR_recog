@@ -6,11 +6,13 @@ from ARFTT.listen_radio import RTLSDR_Radio
 class RTLSDR_GUI:
     def __init__(self, root, rtl_sdr_radio):
         self.root = root
+        self.root.geometry("400x300")
         self.rtl_sdr_radio = rtl_sdr_radio
 
         self.paused = True
         self.squelch = tk.DoubleVar()
         self.squelch.set(self.rtl_sdr_radio.squelch)  # Default squelch value
+        self.freq_entry_value = tk.StringVar()  # Variable to store frequency input
 
         self.setup_gui()
 
@@ -26,8 +28,15 @@ class RTLSDR_GUI:
         self.squelch_label = tk.Label(self.root, text="Squelch Threshold:")
         self.squelch_label.pack()
         self.squelch_scale = tk.Scale(self.root, from_=-10000, to=10000, orient=tk.HORIZONTAL,
-                                      variable=self.squelch, command=self.update_squelch)
+                                      variable=self.squelch, command=self.update_squelch, length=300)
         self.squelch_scale.pack()
+
+        # Add a label and entry for frequency input
+        self.freq_label = tk.Label(self.root, text="Frequency (Hz):")
+        self.freq_label.pack()
+        self.freq_entry = tk.Entry(self.root)
+        self.freq_entry.insert(0, "147410000")  # Default frequency value
+        self.freq_entry.pack()
 
         # Add a button to apply parameter changes
         self.apply_button = tk.Button(self.root, text="Apply Changes", command=self.apply_parameters)
@@ -41,7 +50,10 @@ class RTLSDR_GUI:
     def toggle_play(self):
         if self.paused:
             self.paused = False
-            self.rtl_sdr_radio = RTLSDR_Radio(freq=101500000, ppm=0, squelch=self.squelch.get())
+            freq = int(self.freq_entry.get())  # Get frequency from entry
+            print(freq)
+            self.rtl_sdr_radio = RTLSDR_Radio(freq=freq, ppm=0, squelch=self.squelch.get())
+            # self.rtl_sdr_radio = RTLSDR_Radio(freq=147410000, ppm=0, squelch=self.squelch.get())
             asyncio.create_task(self.rtl_sdr_radio.start())
 
     def update_squelch(self, value):
