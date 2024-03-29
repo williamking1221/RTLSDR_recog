@@ -51,9 +51,8 @@ class RTLSDR_GUI:
         if self.paused:
             self.paused = False
             freq = int(self.freq_entry.get())  # Get frequency from entry
-            print(freq)
-            self.rtl_sdr_radio = RTLSDR_Radio(freq=freq, ppm=0, squelch=self.squelch.get())
-            # self.rtl_sdr_radio = RTLSDR_Radio(freq=147410000, ppm=0, squelch=self.squelch.get())
+            # self.rtl_sdr_radio = RTLSDR_Radio(freq=freq, ppm=0, squelch=self.squelch.get())
+            self.rtl_sdr_radio = RTLSDR_Radio(freq=147410000, ppm=0, squelch=self.squelch.get())
             asyncio.create_task(self.rtl_sdr_radio.start())
 
     def update_squelch(self, value):

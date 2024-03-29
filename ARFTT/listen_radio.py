@@ -1,10 +1,13 @@
 from typing import List
 from rtlsdr import RtlSdr
 from rtlsdr.rtlsdraio import RtlSdrAio
-import argparse
 import numpy as np
 import pyaudio
 import scipy.signal as signal
+import subprocess
+import threading
+import wave
+import time
 
 
 SampleStream = List[float]
@@ -19,6 +22,11 @@ class RTLSDR_Radio:
 
         self.audio_rate = 48000
         self.audio_output = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=self.audio_rate, output=True)
+
+        self.current_audio_signal = None  # Initialize current_audio_signal attribute
+        self.audio_buffer = []  # Initialize audio buffer to store segments
+        self.transcribe_interval = 60  # Interval for transcription in seconds
+        self.transcribe_countdown = self.transcribe_interval
 
     async def process_samples(self, samples: SampleStream, sdr: RtlSdr) -> None:
         sample_rate_fm = 240000
@@ -35,6 +43,16 @@ class RTLSDR_Radio:
 
         self.audio_output.write(squelched_audio.astype("int16").tobytes())
 
+        # Add audio segment to buffer
+        self.audio_buffer.append(squelched_audio)
+
+        # Check if it's time to transcribe
+        self.transcribe_countdown -= 1
+        if self.transcribe_countdown <= 0:
+            self.transcribe_audio()
+            self.transcribe_countdown = self.transcribe_interval
+
+
     def apply_squelch(self, audio_signal):
         # Calculate the signal power
         signal_power = np.mean(audio_signal ** 2)
@@ -47,8 +65,26 @@ class RTLSDR_Radio:
 
         return squelched_audio
 
-    def read_callback(self, samples, rtl_sdr_obj):
-        self.process_samples(samples, rtl_sdr_obj)
+    def transcribe_audio(self):
+        # Check if there's enough audio to transcribe
+        if len(self.audio_buffer) == 0:
+            return
+
+        # Concatenate audio segments
+        full_audio = np.concatenate(self.audio_buffer)
+        self.audio_buffer = []  # Clear audio buffer after concatenating
+
+        # Save concatenated audio to a WAV file
+        filename = f"audio_{int(time.time())}.wav"
+        with wave.open(filename, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(pyaudio.PyAudio().get_sample_size(pyaudio.paInt16))
+            wf.setframerate(self.audio_rate)
+            wf.writeframes(full_audio.tobytes())
+
+        # Call transcription command
+        subprocess.run(["/whisper.cpp/main", "-m ", "whisper.cpp/models/ggml-base.en.bin", "-f ", filename])
+
 
     async def start(self):
         self.sdr = RtlSdrAio()
