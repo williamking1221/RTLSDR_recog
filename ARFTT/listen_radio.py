@@ -20,13 +20,15 @@ class RTLSDR_Radio:
         self.ppm = ppm
         self.squelch = squelch
 
-        self.audio_rate = 48000
+        self.audio_rate = 16000
         self.audio_output = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=self.audio_rate, output=True)
 
-        self.current_audio_signal = None  # Initialize current_audio_signal attribute
         self.audio_buffer = []  # Initialize audio buffer to store segments
         self.transcribe_interval = 60  # Interval for transcription in seconds
-        self.transcribe_countdown = self.transcribe_interval
+
+        # Start a separate thread for transcription
+        self.transcribe_thread = threading.Thread(target=self.transcribe_audio_thread, daemon=True)
+        self.transcribe_thread.start()
 
     async def process_samples(self, samples: SampleStream, sdr: RtlSdr) -> None:
         sample_rate_fm = 240000
@@ -46,13 +48,6 @@ class RTLSDR_Radio:
         # Add audio segment to buffer
         self.audio_buffer.append(squelched_audio)
 
-        # Check if it's time to transcribe
-        self.transcribe_countdown -= 1
-        if self.transcribe_countdown <= 0:
-            self.transcribe_audio()
-            self.transcribe_countdown = self.transcribe_interval
-
-
     def apply_squelch(self, audio_signal):
         # Calculate the signal power
         signal_power = np.mean(audio_signal ** 2)
@@ -65,26 +60,31 @@ class RTLSDR_Radio:
 
         return squelched_audio
 
-    def transcribe_audio(self):
-        # Check if there's enough audio to transcribe
-        if len(self.audio_buffer) == 0:
-            return
+    def transcribe_audio_thread(self):
+        while True:
+            # Check if there's enough audio to transcribe
+            if len(self.audio_buffer) == 0:
+                time.sleep(30)  # Sleep for a short duration and check again
+                continue
 
-        # Concatenate audio segments
-        full_audio = np.concatenate(self.audio_buffer)
-        self.audio_buffer = []  # Clear audio buffer after concatenating
+            # Concatenate audio segments
+            full_audio = np.concatenate(self.audio_buffer)
+            print(full_audio)
+            self.audio_buffer = []  # Clear audio buffer after concatenating
 
-        # Save concatenated audio to a WAV file
-        filename = f"audio_{int(time.time())}.wav"
-        with wave.open(filename, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(pyaudio.PyAudio().get_sample_size(pyaudio.paInt16))
-            wf.setframerate(self.audio_rate)
-            wf.writeframes(full_audio.tobytes())
+            # Save concatenated audio to a WAV file
+            filename = f"audio_{int(time.time())}.wav"
+            with wave.open(filename, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(pyaudio.PyAudio().get_sample_size(pyaudio.paInt16))
+                wf.setframerate(self.audio_rate)
+                wf.writeframes(full_audio.tobytes())
 
-        # Call transcription command
-        subprocess.run(["/whisper.cpp/main", "-m ", "whisper.cpp/models/ggml-base.en.bin", "-f ", filename])
+            # Call transcription command
+            subprocess.run(["whisper.cpp/main", "-m", "whisper.cpp/models/ggml-base.en.bin", "-f", filename])
 
+            # Sleep for the remaining time until the next transcription interval
+            time.sleep(self.transcribe_interval)
 
     async def start(self):
         self.sdr = RtlSdrAio()
