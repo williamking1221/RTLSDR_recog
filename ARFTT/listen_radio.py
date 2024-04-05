@@ -8,6 +8,8 @@ import subprocess
 import threading
 import wave
 import time
+import matplotlib.pyplot as plt
+import queue
 
 
 SampleStream = List[float]
@@ -24,12 +26,13 @@ class RTLSDR_Radio:
         self.audio_output = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=self.audio_rate, output=True)
 
         self.audio_buffer = []  # Initialize audio buffer to store segments
-        self.transcribe_interval = 60  # Interval for transcription in seconds
+        self.transcribe_interval = 30  # Interval for transcription in seconds
 
         # Start a separate thread for transcription
         self.transcribe_thread = threading.Thread(target=self.transcribe_audio_thread, daemon=True)
         self.transcribe_thread.start()
 
+        self.audio_queue = queue.Queue()
     async def process_samples(self, samples: SampleStream, sdr: RtlSdr) -> None:
         sample_rate_fm = 240000
         iq_commercial = signal.decimate(samples, int(self.sdr.get_sample_rate()) // sample_rate_fm)
@@ -69,8 +72,9 @@ class RTLSDR_Radio:
 
             # Concatenate audio segments
             full_audio = np.concatenate(self.audio_buffer)
-            print(full_audio)
-            self.audio_buffer = []  # Clear audio buffer after concatenating
+            self.audio_buffer.clear()  # Clear audio buffer after concatenating
+
+            self.audio_queue.put(full_audio)
 
             # Save concatenated audio to a WAV file
             filename = f"audio_{int(time.time())}.wav"
@@ -81,7 +85,8 @@ class RTLSDR_Radio:
                 wf.writeframes(full_audio.tobytes())
 
             # Call transcription command
-            subprocess.run(["whisper.cpp/main", "-m", "whisper.cpp/models/ggml-base.en.bin", "-f", filename])
+            subprocess.run(["whisper.cpp/main", "-m", "whisper.cpp/models/ggml-tiny.bin", "-pc", "-tr", "-l", "auto",
+                            "-f", filename])
 
             # Sleep for the remaining time until the next transcription interval
             time.sleep(self.transcribe_interval)
@@ -98,3 +103,12 @@ class RTLSDR_Radio:
 
     async def stop(self):
         await self.sdr.stop()
+
+    def plot_audio(self):
+        while True:
+            # Get audio data from the queue
+            full_audio = self.audio_queue.get()
+
+            # Plot full_audio
+            plt.plot(full_audio)
+            plt.show()

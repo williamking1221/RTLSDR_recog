@@ -6,13 +6,13 @@ from ARFTT.listen_radio import RTLSDR_Radio
 class RTLSDR_GUI:
     def __init__(self, root, rtl_sdr_radio):
         self.root = root
-        self.root.geometry("400x300")
+        self.root.geometry("1200x1200")
         self.rtl_sdr_radio = rtl_sdr_radio
 
         self.paused = True
         self.squelch = tk.DoubleVar()
         self.squelch.set(self.rtl_sdr_radio.squelch)  # Default squelch value
-        self.freq_entry_value = tk.StringVar()  # Variable to store frequency input
+        self.freq_entry_value = tk.DoubleVar()  # Variable to store frequency input
 
         self.setup_gui()
 
@@ -104,9 +104,10 @@ class RTLSDR_GUI:
     def toggle_play(self):
         if self.paused:
             self.paused = False
-            freq = int(self.freq_entry.get())  # Get frequency from entry
+            freq = self.freq_entry.get()  # Get frequency from entry
             # self.rtl_sdr_radio = RTLSDR_Radio(freq=freq, ppm=0, squelch=self.squelch.get())
-            self.rtl_sdr_radio = RTLSDR_Radio(freq=147410000, ppm=0, squelch=self.squelch.get())
+            self.rtl_sdr_radio = RTLSDR_Radio(freq=freq, ppm=0, squelch=self.squelch.get())
+            # self.rtl_sdr_radio = RTLSDR_Radio(freq=105100000, ppm=0, squelch=self.squelch.get())
             asyncio.create_task(self.rtl_sdr_radio.start())
 
     def update_squelch(self, value):
