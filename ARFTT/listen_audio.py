@@ -7,6 +7,8 @@ import scipy.signal as signal
 import subprocess
 import wave
 import time
+import matplotlib.pyplot as plt
+from scipy.signal import butter, filtfilt, medfilt
 
 SampleStream = List[float]
 AudioStream = List[int]
@@ -14,8 +16,10 @@ AudioStream = List[int]
 stream_buf = bytes()
 stream_counter = 0
 
-audio_rate = 48000
+audio_rate = 16000
 audio_output = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=audio_rate, output=True)
+
+audiobuffer = []
 
 
 def process(samples: SampleStream, sdr: RtlSdr, squelch: float) -> List:
@@ -30,10 +34,25 @@ def process(samples: SampleStream, sdr: RtlSdr, squelch: float) -> List:
 
     # Apply squelch to the demodulated audio
     squelched_audio = apply_squelch(audio_signal, squelch)
-    # squelched_audio = audio_signal
 
-    audio_output.write(squelched_audio.astype("int16").tobytes())
-    return squelched_audio
+    # Apply low-pass filter to the audio signal
+    # filtered_audio = lowpass_filter(squelched_audio, cutoff_freq=5000, sampling_freq=audio_rate)
+
+    # Apply median filter to remove large spikes
+    # filtered_audio = remove_large_spikes(squelched_audio, window_size=101)
+
+    # Apply test filter
+    filtered_audio = personal_spike_filter(squelched_audio, 5000)
+
+    audio_output.write(filtered_audio.astype("int16").tobytes())
+
+    audiobuffer.append(filtered_audio)
+
+    # Check if it's time to plot (every 30 seconds)
+    if len(audiobuffer) * 1024 / audio_rate >= 30:
+        plot_audio()
+
+    return filtered_audio
 
 
 def apply_squelch(audio_signal: np.ndarray, squelch_threshold) -> np.ndarray:
@@ -49,6 +68,27 @@ def apply_squelch(audio_signal: np.ndarray, squelch_threshold) -> np.ndarray:
     return squelched_audio
 
 
+def lowpass_filter(signal, cutoff_freq, sampling_freq):
+    nyquist_freq = 0.5 * sampling_freq
+    normalized_cutoff = cutoff_freq / nyquist_freq
+    b, a = butter(1, normalized_cutoff, btype='low', analog=False)  # Using a first-order Butterworth filter for simplicity
+    filtered_signal = filtfilt(b, a, signal)
+    return filtered_signal
+
+
+def remove_large_spikes(signal, window_size):
+    filtered_signal = medfilt(signal, kernel_size=window_size)
+    return filtered_signal
+
+
+def personal_spike_filter(signal, magnitude):
+    if np.max(signal) > magnitude or np.min(signal) < -magnitude:
+        filtered_signal = np.zeros_like(signal)
+    else:
+        filtered_signal = signal
+    return filtered_signal
+
+
 def transcribe_audio(full_audio: np.ndarray):
     # Save audio to a WAV file
     filename = f"audio_{int(time.time())}.wav"
@@ -62,8 +102,24 @@ def transcribe_audio(full_audio: np.ndarray):
     subprocess.run(["../whisper.cpp/main", "-m", "../whisper.cpp/models/ggml-base.en.bin", "-f", filename])
 
 
-# def read_callback(samples, rtl_sdr_obj):
-#     process(samples, rtl_sdr_obj)
+def plot_audio():
+    full_audio = np.concatenate(audiobuffer)
+    print(full_audio.shape)
+
+    # Clear the audio buffer
+    audiobuffer.clear()
+
+    # Plot the squelched audio
+    plt.figure()
+    plt.plot(full_audio)
+    plt.title('Squelched Audio')
+    plt.xlabel('Sample')
+    plt.ylabel('Amplitude')
+    plt.show()
+
+
+def read_callback(samples, rtl_sdr_obj):
+    process(samples, rtl_sdr_obj, 1000)
 
 
 def main():
@@ -90,47 +146,7 @@ def main():
     squelch_threshold = args.squelch
     transcription_interval = args.interval
 
-    # Start the subprocess for whisper.cpp
-    # whisper_command = ["../whisper.cpp/stream", "-m", "../whisper.cpp/models/ggml-base.en.bin", "-t", "8", "--step",
-    #                    "500", "--length", "5000"]
-    # whisper_process = subprocess.Popen(whisper_command, stdin=subprocess.PIPE)
-
-    audio_buffer = []
-
-    # audio_output = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=audio_rate, output=True)
-
-    print("Streaming audio to whisper.cpp. Press Ctrl+C to stop.")
-
-    # sdr.read_samples_async(read_callback, int(sdr.get_sample_rate()) // 16)
-
-    try:
-        while True:
-            # Read samples from RTL-SDR
-            samples = sdr.read_samples(1024)
-
-            # Process samples and apply squelch
-            sq_audio = process(samples, sdr, squelch_threshold)
-
-            # Add audio to buffer
-            audio_buffer.append(sq_audio)
-
-            # Check if it's time to transcribe
-            # if len(audio_buffer) * 1024 / audio_rate >= transcription_interval:
-            #     # Concatenate audio segments
-            #     full_audio = np.concatenate(audio_buffer)
-            #     audio_buffer = []  # Clear audio buffer after concatenating
-            #
-            #     # Transcribe audio
-            #     transcribe_audio(full_audio)
-
-    except KeyboardInterrupt:
-        print("Stopping...")
-
-    finally:
-        # Clean up resources
-        sdr.close()
-        audio_output.stop_stream()
-        audio_output.close()
+    sdr.read_samples_async(read_callback, int(sdr.get_sample_rate()) // 16)
 
 
 if __name__ == "__main__":

@@ -48,7 +48,7 @@ class RTLSDR_GUI:
 
         self.squelch_label = tk.Label(self.frame1, text="Squelch Threshold:")
         self.squelch_label.grid(row=2, column=0)
-        self.squelch_scale = tk.Scale(self.frame1, from_=-10000, to=10000, orient=tk.HORIZONTAL,
+        self.squelch_scale = tk.Scale(self.frame1, from_=0, to=25000, orient=tk.HORIZONTAL,
                                     variable=self.squelch, command=self.update_squelch, length=150)
         self.squelch_scale.grid(row=3, column=0, padx=5, pady=5)
 
@@ -125,6 +125,6 @@ class RTLSDR_GUI:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    rtl_sdr_radio = RTLSDR_Radio(freq=147410000, ppm=0, squelch=0)
+    rtl_sdr_radio = RTLSDR_Radio(freq=147410000, ppm=0, squelch=10000)
     gui = RTLSDR_GUI(root, rtl_sdr_radio)
     root.mainloop()

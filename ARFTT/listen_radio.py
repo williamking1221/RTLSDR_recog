@@ -26,13 +26,12 @@ class RTLSDR_Radio:
         self.audio_output = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=self.audio_rate, output=True)
 
         self.audio_buffer = []  # Initialize audio buffer to store segments
-        self.transcribe_interval = 30  # Interval for transcription in seconds
+        self.transcribe_interval = 30  # Interval for transcription check in seconds
 
         # Start a separate thread for transcription
         self.transcribe_thread = threading.Thread(target=self.transcribe_audio_thread, daemon=True)
         self.transcribe_thread.start()
 
-        self.audio_queue = queue.Queue()
     async def process_samples(self, samples: SampleStream, sdr: RtlSdr) -> None:
         sample_rate_fm = 240000
         iq_commercial = signal.decimate(samples, int(self.sdr.get_sample_rate()) // sample_rate_fm)
@@ -43,13 +42,11 @@ class RTLSDR_Radio:
         audio_signal = signal.decimate(demodulated_commercial, sample_rate_fm // self.audio_rate, zero_phase=True)
         audio_signal = np.int16(14000 * audio_signal)
 
-        # Apply squelch to the demodulated audio
-        squelched_audio = self.apply_squelch(audio_signal)
+        filtered_audio = self.personal_spike_filter(audio_signal)
 
-        self.audio_output.write(squelched_audio.astype("int16").tobytes())
+        self.audio_output.write(filtered_audio.astype("int16").tobytes())
 
-        # Add audio segment to buffer
-        self.audio_buffer.append(squelched_audio)
+        self.audio_buffer.append(filtered_audio)
 
     def apply_squelch(self, audio_signal):
         # Calculate the signal power
@@ -63,20 +60,43 @@ class RTLSDR_Radio:
 
         return squelched_audio
 
+    def personal_spike_filter(self, audio_signal):
+        if np.max(audio_signal) > self.squelch or np.min(audio_signal) < -self.squelch:
+            filtered_signal = np.zeros_like(audio_signal)
+        else:
+            filtered_signal = audio_signal
+        return filtered_signal
+
     def transcribe_audio_thread(self):
+        checkpoint_idx = -1
         while True:
             # Check if there's enough audio to transcribe
             if len(self.audio_buffer) == 0:
-                time.sleep(30)  # Sleep for a short duration and check again
+                checkpoint_idx = 0
+                time.sleep(self.transcribe_interval)  # Sleep for a short duration and check again
                 continue
 
             # Concatenate audio segments
             full_audio = np.concatenate(self.audio_buffer)
-            self.audio_buffer.clear()  # Clear audio buffer after concatenating
 
-            self.audio_queue.put(full_audio)
+            # If there is speech in the approximately last 15 seconds, don't cut yet.
+            if np.max(full_audio[-250000:]) > 0:
+                checkpoint_idx = np.shape(full_audio)[0]
+                print("Still speaking")
+                time.sleep(self.transcribe_interval)
+                continue
 
             # Save concatenated audio to a WAV file
+            self.audio_buffer.clear()
+
+            while checkpoint_idx + 2500000 < full_audio.shape[0] and np.max(full_audio[checkpoint_idx + 250000:]) > 0:
+                checkpoint_idx += 2500000
+
+            full_audio = full_audio[:checkpoint_idx]
+
+            # Reset checkpoint idx
+            checkpoint_idx = 0
+            print("Done speaking")
             filename = f"audio_{int(time.time())}.wav"
             with wave.open(filename, 'wb') as wf:
                 wf.setnchannels(1)
@@ -85,7 +105,7 @@ class RTLSDR_Radio:
                 wf.writeframes(full_audio.tobytes())
 
             # Call transcription command
-            subprocess.run(["whisper.cpp/main", "-m", "whisper.cpp/models/ggml-tiny.bin", "-pc", "-tr", "-l", "auto",
+            subprocess.run(["whisper.cpp/main", "-m", "whisper.cpp/models/ggml-medium.bin", "-pc", "-tr", "-l", "auto",
                             "-f", filename])
 
             # Sleep for the remaining time until the next transcription interval
@@ -103,12 +123,3 @@ class RTLSDR_Radio:
 
     async def stop(self):
         await self.sdr.stop()
-
-    def plot_audio(self):
-        while True:
-            # Get audio data from the queue
-            full_audio = self.audio_queue.get()
-
-            # Plot full_audio
-            plt.plot(full_audio)
-            plt.show()

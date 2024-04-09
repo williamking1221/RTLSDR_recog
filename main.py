@@ -7,7 +7,7 @@ from ARFTT.listen_radio import RTLSDR_Radio
 async def main():
     root = tk.Tk()
     root.title("RTL-SDR Receiver GUI")
-    rtl_sdr_radio = RTLSDR_Radio(freq=147410000, ppm=0, squelch=1000)  # Adjust parameters as needed
+    rtl_sdr_radio = RTLSDR_Radio(freq=147410000, ppm=0, squelch=5000)  # Adjust parameters as needed
 
     # Create an instance of RTLSDR_GUI, passing the RTLSDR_Radio object
     rtl_sdr_gui = RTLSDR_GUI(root, rtl_sdr_radio)
