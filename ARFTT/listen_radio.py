@@ -86,16 +86,16 @@ class RTLSDR_Radio:
                 time.sleep(self.transcribe_interval)
                 continue
 
+            # Remove trailing zeros
+            nonzero_indices = np.nonzero(full_audio)[0]
+            if len(nonzero_indices) > 0:
+                first_nonzero_idx = nonzero_indices[0] - 1
+                last_nonzero_idx = nonzero_indices[-1] + 1
+                full_audio = full_audio[first_nonzero_idx:last_nonzero_idx]
+
             # Save concatenated audio to a WAV file
             self.audio_buffer.clear()
 
-            while checkpoint_idx + 2500000 < full_audio.shape[0] and np.max(full_audio[checkpoint_idx + 250000:]) > 0:
-                checkpoint_idx += 2500000
-
-            full_audio = full_audio[:checkpoint_idx]
-
-            # Reset checkpoint idx
-            checkpoint_idx = 0
             print("Done speaking")
             filename = f"audio_{int(time.time())}.wav"
             with wave.open(filename, 'wb') as wf:
