@@ -1,7 +1,10 @@
 import tkinter as tk
 from tkinter import ttk
+from tkhtmlview import HTMLLabel
 import asyncio
 from ARFTT.listen_radio import RTLSDR_Radio
+import json
+import queue
 
 class RTLSDR_GUI:
     def __init__(self, root, rtl_sdr_radio):
@@ -9,12 +12,21 @@ class RTLSDR_GUI:
         self.root.geometry("1200x1200")
         self.rtl_sdr_radio = rtl_sdr_radio
 
+        # Pass reference to RTLSDR_GUI instance to RTLSDR_Radio
+        self.rtl_sdr_radio.gui = self
+
         self.paused = True
         self.squelch = tk.DoubleVar()
         self.squelch.set(self.rtl_sdr_radio.squelch)  # Default squelch value
-        self.freq_entry_value = tk.DoubleVar()  # Variable to store frequency input
+        self.freq_entry_value = tk.DoubleVar()  # Variable to store frequency input\
+
+        self.queue = queue.Queue()
+        self.relay_queue = queue.Queue()
 
         self.setup_gui()
+
+        self.root.after(1000, self.process_queue)  # Run every second
+        self.root.after(1000, self.process_relay_queue) # Run every second
 
     def setup_gui(self):
         self.notebook = ttk.Notebook(self.root)
@@ -69,10 +81,18 @@ class RTLSDR_GUI:
 
         # Transcription Display
         self.transcription_label = tk.Label(self.frame1, text="Transcription:")
-        self.transcription_label.grid(row=0, column=2, padx=(0,250), pady=5, sticky="nsew") 
+        self.transcription_label.grid(row=0, column=2, padx=(0,250), pady=5, sticky="nsew")
 
-        self.text_display = tk.Text(self.frame1, height=10, width=40)
+        self.text_display = tk.Text(self.frame1, height=20, width=60, background="black")
         self.text_display.grid(row=1, column=2, rowspan=5, padx=5, pady=5)
+        self.text_display.tag_config('neither', foreground="white")
+        self.text_display.tag_config('great', foreground="green")
+        self.text_display.tag_config('good', foreground="yellow")
+        self.text_display.tag_config('average', foreground="orange")
+        self.text_display.tag_config('bad', foreground="red")
+
+        self.relay_display = tk.Label(self.frame1, text="Relay Message")
+        self.relay_display.grid(row=7, column=2, padx=(0,250), pady=5, sticky="nsew")
 
         # Add widgets to frame2 (bottom-left quadrant)
         self.freq_label2 = tk.Label(self.frame2, text="Frequency (Hz):")
@@ -105,9 +125,7 @@ class RTLSDR_GUI:
         if self.paused:
             self.paused = False
             freq = self.freq_entry.get()  # Get frequency from entry
-            # self.rtl_sdr_radio = RTLSDR_Radio(freq=freq, ppm=0, squelch=self.squelch.get())
-            self.rtl_sdr_radio = RTLSDR_Radio(freq=freq, ppm=0, squelch=self.squelch.get())
-            # self.rtl_sdr_radio = RTLSDR_Radio(freq=105100000, ppm=0, squelch=self.squelch.get())
+            self.rtl_sdr_radio = RTLSDR_Radio(freq=freq, ppm=0, squelch=self.squelch.get(), gui=self)
             asyncio.create_task(self.rtl_sdr_radio.start())
 
     def update_squelch(self, value):
@@ -123,8 +141,61 @@ class RTLSDR_GUI:
         if self.paused:
             asyncio.create_task(self.rtl_sdr_radio.start())  # Start if paused
 
-if __name__ == "__main__":
-    root = tk.Tk()
-    rtl_sdr_radio = RTLSDR_Radio(freq=147410000, ppm=0, squelch=10000)
-    gui = RTLSDR_GUI(root, rtl_sdr_radio)
-    root.mainloop()
+    def relay_message(self, message):
+        self.relay_queue.put(message)
+
+    def process_relay_queue(self):
+        # Check if anything in the queue
+        while not self.relay_queue.empty():
+            relay_msg = self.relay_queue.get()
+            self.relay_display.config(text=relay_msg)
+        self.root.after(1000, self.process_relay_queue)
+
+    def parse_output_json(self, json_file_path):
+        # Read the JSON file
+        with open(json_file_path, 'r') as file:
+            json_data = json.load(file)
+
+        # Put the JSON data into the queue
+        self.queue.put(json_data)
+
+    def process_queue(self):
+        # Check if there is anything in the queue
+        while not self.queue.empty():
+            # Get the JSON data from the queue
+            json_data = self.queue.get()
+
+            self.text_display.delete("1.0", tk.END)
+
+            # Check if translation
+            if "params" in json_data:
+                self.transcription_label.config(text=f'Spoken Language: {json_data["result"]["language"]}')
+
+            # Extract the transcription text and timestamps from the JSON data
+            if "transcription" in json_data:
+                for entry in json_data["transcription"]:
+                    if "timestamps" in entry and "tokens" in entry:
+                        timestamps = entry["timestamps"]
+                        self.text_display.insert(tk.END, f"{timestamps['from']} - {timestamps['to']}: ", 'neither')
+                        tokens = entry["tokens"]
+                        for i in range(len(tokens)):
+                            token = tokens[i]
+                            token_text = token["text"]
+                            if token_text[:2] == "[_":
+                                continue
+                            else:
+                                p = token["p"]
+                                status = self.get_color_for_probability(p)
+                                self.text_display.insert(tk.END, token_text, status)
+                        self.text_display.insert(tk.END, "\n")  # Insert newline after each transcription entry
+        self.root.after(1000, self.process_queue)
+
+    def get_color_for_probability(self, p):
+        if p > 0.85:
+            return 'great'
+        elif 0.70 <= p <= 0.85:
+            return 'good'
+        elif 0.50 <= p < 0.70:
+            return 'average'
+        else:
+            return 'bad'

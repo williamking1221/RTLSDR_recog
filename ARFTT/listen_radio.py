@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Callable, Any
 from rtlsdr import RtlSdr
 from rtlsdr.rtlsdraio import RtlSdrAio
 import numpy as np
@@ -8,8 +8,8 @@ import subprocess
 import threading
 import wave
 import time
+import os
 import matplotlib.pyplot as plt
-import queue
 
 
 SampleStream = List[float]
@@ -17,10 +17,11 @@ AudioStream = List[int]
 
 
 class RTLSDR_Radio:
-    def __init__(self, freq, ppm, squelch):
+    def __init__(self, freq, ppm, squelch, gui=None, output_callback: Callable[[str], Any] = None):
         self.freq = freq
         self.ppm = ppm
         self.squelch = squelch
+        self.gui = gui
 
         self.audio_rate = 16000
         self.audio_output = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=self.audio_rate, output=True)
@@ -68,11 +69,11 @@ class RTLSDR_Radio:
         return filtered_signal
 
     def transcribe_audio_thread(self):
-        checkpoint_idx = -1
         while True:
             # Check if there's enough audio to transcribe
             if len(self.audio_buffer) == 0:
-                checkpoint_idx = 0
+                if self.gui is not None:
+                    self.gui.relay_message(f"Silence at {self.freq}")
                 time.sleep(self.transcribe_interval)  # Sleep for a short duration and check again
                 continue
 
@@ -81,35 +82,48 @@ class RTLSDR_Radio:
 
             # If there is speech in the approximately last 15 seconds, don't cut yet.
             if np.max(full_audio[-250000:]) > 0:
-                checkpoint_idx = np.shape(full_audio)[0]
-                print("Still speaking")
+                if self.gui is not None:
+                    self.gui.relay_message(f"Audio at {self.freq}")
                 time.sleep(self.transcribe_interval)
                 continue
 
             # Remove trailing zeros
             nonzero_indices = np.nonzero(full_audio)[0]
             if len(nonzero_indices) > 0:
-                first_nonzero_idx = nonzero_indices[0] - 1
-                last_nonzero_idx = nonzero_indices[-1] + 1
+                if self.gui is not None:
+                    self.gui.relay_message(f"Processing Audio at {self.freq}")
+                first_nonzero_idx = nonzero_indices[0]
+                print(first_nonzero_idx)
+                last_nonzero_idx = nonzero_indices[-1]
+                print(last_nonzero_idx)
                 full_audio = full_audio[first_nonzero_idx:last_nonzero_idx]
+                self.audio_buffer.clear()
 
-            # Save concatenated audio to a WAV file
-            self.audio_buffer.clear()
+                # Save concatenated audio to a WAV file
+                curr_time = int(time.time())
+                filename = f"audio_{curr_time}.wav"
+                with wave.open(filename, 'wb') as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(pyaudio.PyAudio().get_sample_size(pyaudio.paInt16))
+                    wf.setframerate(self.audio_rate)
+                    wf.writeframes(full_audio.tobytes())
 
-            print("Done speaking")
-            filename = f"audio_{int(time.time())}.wav"
-            with wave.open(filename, 'wb') as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(pyaudio.PyAudio().get_sample_size(pyaudio.paInt16))
-                wf.setframerate(self.audio_rate)
-                wf.writeframes(full_audio.tobytes())
+                # Call transcription command
+                subprocess.run(["whisper.cpp/main", "-m", "whisper.cpp/models/ggml-medium.bin","-pc", "-tr", "-ojf",
+                                "-l", "auto", "-f", filename])
 
-            # Call transcription command
-            subprocess.run(["whisper.cpp/main", "-m", "whisper.cpp/models/ggml-medium.bin", "-pc", "-tr", "-l", "auto",
-                            "-f", filename])
+                json_file_path = f"audio_{curr_time}.wav.json"
+                if self.gui is not None:
+                    if os.path.exists(json_file_path):
+                        self.gui.parse_output_json(json_file_path)
 
-            # Sleep for the remaining time until the next transcription interval
-            time.sleep(self.transcribe_interval)
+                # Sleep for the remaining time until the next transcription interval
+                time.sleep(self.transcribe_interval)
+            else:
+                if self.gui is not None:
+                    self.gui.relay_message(f"Silence at {self.freq}")
+                    self.audio_buffer.clear()
+                    time.sleep(self.transcribe_interval)
 
     async def start(self):
         self.sdr = RtlSdrAio()
