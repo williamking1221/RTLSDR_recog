@@ -9,7 +9,6 @@ import threading
 import wave
 import time
 import os
-import matplotlib.pyplot as plt
 
 
 SampleStream = List[float]
@@ -17,11 +16,12 @@ AudioStream = List[int]
 
 
 class RTLSDR_Radio:
-    def __init__(self, freq, ppm, squelch, gui=None, output_callback: Callable[[str], Any] = None):
+    def __init__(self, freq, ppm, squelch, device_index, gui=None):
         self.freq = freq
         self.ppm = ppm
         self.squelch = squelch
         self.gui = gui
+        self.dev_num = device_index
 
         self.audio_rate = 16000
         self.audio_output = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=self.audio_rate, output=True)
@@ -73,7 +73,7 @@ class RTLSDR_Radio:
             # Check if there's enough audio to transcribe
             if len(self.audio_buffer) == 0:
                 if self.gui is not None:
-                    self.gui.relay_message(f"Silence at {self.freq}")
+                    self.gui.relay_message(f"Silence at {self.freq}", self.dev_num)
                 time.sleep(self.transcribe_interval)  # Sleep for a short duration and check again
                 continue
 
@@ -83,7 +83,7 @@ class RTLSDR_Radio:
             # If there is speech in the approximately last 15 seconds, don't cut yet.
             if np.max(full_audio[-250000:]) > 0:
                 if self.gui is not None:
-                    self.gui.relay_message(f"Audio at {self.freq}")
+                    self.gui.relay_message(f"Audio at {self.freq}", self.dev_num)
                 time.sleep(self.transcribe_interval)
                 continue
 
@@ -91,11 +91,9 @@ class RTLSDR_Radio:
             nonzero_indices = np.nonzero(full_audio)[0]
             if len(nonzero_indices) > 0:
                 if self.gui is not None:
-                    self.gui.relay_message(f"Processing Audio at {self.freq}")
+                    self.gui.relay_message(f"Processing Audio at {self.freq}", self.dev_num)
                 first_nonzero_idx = nonzero_indices[0]
-                print(first_nonzero_idx)
                 last_nonzero_idx = nonzero_indices[-1]
-                print(last_nonzero_idx)
                 full_audio = full_audio[first_nonzero_idx:last_nonzero_idx]
                 self.audio_buffer.clear()
 
@@ -115,18 +113,19 @@ class RTLSDR_Radio:
                 json_file_path = f"audio_{curr_time}.wav.json"
                 if self.gui is not None:
                     if os.path.exists(json_file_path):
-                        self.gui.parse_output_json(json_file_path)
+                        self.gui.parse_output_json(json_file_path, self.dev_num)
 
                 # Sleep for the remaining time until the next transcription interval
                 time.sleep(self.transcribe_interval)
             else:
                 if self.gui is not None:
-                    self.gui.relay_message(f"Silence at {self.freq}")
+                    self.gui.relay_message(f"Silence at {self.freq}", self.dev_num)
                     self.audio_buffer.clear()
                     time.sleep(self.transcribe_interval)
 
     async def start(self):
-        self.sdr = RtlSdrAio()
+        print(self.dev_num)
+        self.sdr = RtlSdrAio(device_index=self.dev_num)
         self.sdr.rs = 1024000
         self.sdr.fc = self.freq
         self.sdr.gain = "auto"
